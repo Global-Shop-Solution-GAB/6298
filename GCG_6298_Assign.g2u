@@ -1,0 +1,588 @@
+﻿Program.Sub.Preflight.Start
+Program.External.Include.Library("GCG_6298_ErrorHandling.lib")
+V.Global.sEmail.Declare
+V.Global.iCon.Declare
+V.Global.bLocal.Declare
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+V.Local.sLinks.Declare
+V.Local.bMSExcel.Declare
+F.Intrinsic.Control.Try
+F.Intrinsic.Control.CallSub(CheckRegistry)
+
+F.Automation.MSExcel.CheckPresence(V.Local.bMSExcel)
+
+F.Global.Object.CreateDB("GlobalDB",V.Global.iCon)
+'F.Global.Object.Create("oEmployee","Payroll.Employee","GlobalDB",V.Global.iCon,True)
+F.Intrinsic.Control.CallSub(OpenConnection,"Connection",1,"CompanyCommon",True)
+F.Data.DataTable.CreateFromSQL("dtAssignments","con","select "Select", AssignID, CourseID, Employee, AssignDate, AssignDueDate, AssignCompleteDate, Dept, CompleteRev, LastEmailSent from GCG_6298_ASSIGNMENTS where "Select" = 1;",True)
+F.Data.DataTable.CreateFromSQL("dtCourses","con","select CourseID, CourseName, CourseDescr, CourseFreq, CourseCert, CourseActive, CourseRev, DueDateDelta from GCG_6298_COURSES;",True)
+F.Data.DataTable.CreateFromSQL("dtDocLinks","con","select cast(LINK_ID as Integer) as LINK_ID, "TYPE", rtrim("ID") as "ID" from LINK_DATA where "TYPE" = '02090';")
+F.Data.DataTable.ColumnToString("dtDocLinks","LINK_ID",V.Local.sLinks)
+F.Intrinsic.String.Replace(V.Local.sLinks,"*!*",", ",V.Local.sLinks)
+F.Intrinsic.Control.If(V.Local.sLinks,=,"")
+	V.Local.sLinks.Set("-1")
+F.Intrinsic.Control.EndIf
+F.Intrinsic.String.Build("select LINK_ID, FILE_NUM, rtrim(PATH) as PATH, rtrim(FILE) as FILE, rtrim(DESCRIPTION) as DESCRIPTION from ATG_DOC_ASSOC where LINK_ID in ({0});",V.Local.sLinks,V.Local.sLinks)
+F.Data.DataTable.CreateFromSQL("dtDocMstr","con",V.Local.sLinks)
+F.Intrinsic.Control.CallSub(CloseConnection,"Connection",1)
+
+F.Data.Linq.Join(V.Enum.LinqJoinType!LeftJoin,V.Enum.LinqSourceType!DataTable,"dtDocMstr*!*MSTR",V.Enum.LinqSourceType!DataTable,"dtDocLinks*!*LINKS","MSTR.LINK_ID = LINKS.LINK_ID","MSTR.FILE_NUM*!*MSTR.LINK_ID*!*LINKS.TYPE*!*LINKS.ID*!*MSTR.PATH*!*MSTR.FILE*!*MSTR.DESCRIPTION","","","MSTR.FILE_NUM asc","dtDocs",True)
+F.Data.DataTable.Close("dtDocLinks")
+F.Data.DataTable.Close("dtDocMstr")
+
+F.Data.DataView.Create("dtCourses","dvCourse")
+F.Data.DataView.SetSort("dtCourses","dvCourse","CourseRev desc")
+
+F.Data.DataView.Create("dtDocs","dvCourse")
+
+F.Data.DataTable.AddColumn("dtAssignments","EDITED","Boolean",False)
+F.Data.DataTable.AddColumn("dtAssignments","Email_log","String","")
+F.Intrinsic.Control.CallSub(LoopThroughData)
+F.Intrinsic.Control.If(V.Local.bMSExcel)
+	F.Intrinsic.Control.CallSub(ExportAssignments)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.CallSub(SaveAssignments)
+F.Data.DataTable.RemoveColumn("dtAssignments","EDITED")
+
+F.Global.Object.CloseConnection("GlobalDB",V.Global.iCon)
+
+F.Intrinsic.Control.CallSub(DeleteOldLogs)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.LoopThroughData.Start
+V.Local.iCnt.Declare
+V.Local.sFilter.Declare
+V.Local.dDueDate.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.For(V.Local.iCnt,0,V.DataTable.dtAssignments.RowCount--,1)
+	F.Intrinsic.String.Build("[CourseID] = '{0}'",V.DataTable.dtAssignments(V.Local.iCnt).CourseID!FieldVal,V.Local.sFilter)
+	F.Data.DataView.SetFilter("dtCourses","dvCourse",V.Local.sFilter)
+	F.Intrinsic.Control.If(V.DataView.dtCourses!dvCourse.RowCount,>,0)
+		'Course exists
+		F.Intrinsic.Control.If(V.DataView.dtCourses!dvCourse(0).CourseActive!FieldVal)
+			'Course (most recent Rev) is active
+			F.Intrinsic.String.Build("[ID] = '{0}{1}'",V.DataView.dtCourses!dvCourse(0).CourseID!FieldVal,V.DataView.dtCourses!dvCourse(0).CourseRev!FieldVal,V.Local.sFilter)
+			F.Data.DataView.SetFilter("dtDocs","dvCourse",V.Local.sFilter)
+			F.Intrinsic.Control.CallSub(VerifyAssignment,"LastAssignment",V.DataTable.dtAssignments(V.Local.iCnt).AssignDate!FieldValString,"Freq",V.DataView.dtCourses!dvCourse(0).CourseFreq!FieldVal)
+			F.Intrinsic.Control.If(V.Args.Assign)
+				'Assignment needs to be processed - write in the current date, and the due date
+				F.Intrinsic.Date.DateAdd("d",V.DataView.dtCourses!dvCourse(0).DueDateDelta!FieldVal,V.Ambient.Date,V.Local.dDueDate)
+				F.Data.DataTable.SetValue("dtAssignments",V.Local.iCnt,"AssignDate",V.Ambient.Date,"AssignDueDate",V.Local.dDueDate,"AssignCompleteDate",V.Ambient.DBNull,"CompleteRev",V.DataView.dtCourses!dvCourse(0).CourseRev!FieldVal,"LastEmailSent",V.Ambient.Now,"EDITED",True)
+				F.Intrinsic.Control.If(V.Args.Active.Not)
+					'Unassign the record after processing it
+					F.Data.DataTable.SetValue("dtAssignments",V.Local.iCnt,"Select",False)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.CallSub(SendEmail,"RowIndex",V.Local.iCnt)
+				F.Data.DataTable.SetValue("dtAssignments",V.Local.iCnt,"Email_log",V.Args.EmailRet)
+			'Check most recent revision against stored revision "CompleteRev" to see if there was an update to the course that needs to be sent out
+			'Also make sure the "CompleteRev" is not blank so we don't mass email out all the courses at once
+			F.Intrinsic.Control.ElseIf(V.DataTable.dtAssignments(V.Local.iCnt).CompleteRev!FieldValTrim,<>,"",and,V.DataTable.dtAssignments(V.Local.iCnt).CompleteRev!FieldVal,<>,V.DataView.dtCourses!dvCourse(0).CourseRev!FieldVal)
+				'Assignment needs to be processed - write in the current date, and the due date
+				F.Intrinsic.Date.DateAdd("d",V.DataView.dtCourses!dvCourse(0).DueDateDelta!FieldVal,V.Ambient.Date,V.Local.dDueDate)
+				F.Data.DataTable.SetValue("dtAssignments",V.Local.iCnt,"AssignDate",V.Ambient.Date,"AssignDueDate",V.Local.dDueDate,"AssignCompleteDate",V.Ambient.DBNull,"CompleteRev",V.DataView.dtCourses!dvCourse(0).CourseRev!FieldVal,"LastEmailSent",V.Ambient.Now,"EDITED",True)
+				F.Intrinsic.Control.If(V.Args.Active.Not)
+					'Unassign the record after processing it
+					F.Data.DataTable.SetValue("dtAssignments",V.Local.iCnt,"Select",False)
+				F.Intrinsic.Control.EndIf
+				F.Intrinsic.Control.CallSub(SendEmail,"RowIndex",V.Local.iCnt)
+				F.Data.DataTable.SetValue("dtAssignments",V.Local.iCnt,"Email_log",V.Args.EmailRet)
+			F.Intrinsic.Control.ElseIf(V.Args.Assign,=,False,and,V.DataTable.dtAssignments(V.Local.iCnt).Dept!FieldValTrim,!=,"")
+				'Queue up emails in case there are any missing employees
+				F.Intrinsic.Control.CallSub(SendEmail,"RowIndex",V.Local.iCnt)
+				F.Data.DataTable.SetValue("dtAssignments",V.Local.iCnt,"Email_log",V.Args.EmailRet)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iCnt)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.LoopThroughData.End
+
+Program.Sub.VerifyAssignment.Start
+V.Local.dLast.Declare
+V.Local.sInterval.Declare
+V.Local.iLength.Declare
+V.Local.bActive.Declare
+V.Local.dTarget.Declare
+V.Local.bAssign.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.Control.If(V.Args.LastAssignment,=,"")
+	V.Local.dLast.Set(V.Ambient.MinDate)
+F.Intrinsic.Control.Else
+	V.Local.dLast.Set(V.Args.LastAssignment)
+F.Intrinsic.Control.EndIf
+
+'For documentation only to remember what each Frequency type is
+'0 -Once, 1 - Monthly, 2 - Quarterly, 3 - Annually, 4 - Every 2 Years, 5 - Every 3 Years
+
+F.Intrinsic.Control.SelectCase(V.Args.Freq)
+	F.Intrinsic.Control.Case(0)
+		'Once
+		V.Local.sInterval.Set("d")
+		V.Local.iLength.Set(0)
+		V.Local.bActive.Set(False)
+	F.Intrinsic.Control.Case(1)
+		'Monthly
+		V.Local.sInterval.Set("m")
+		V.Local.iLength.Set(1)
+		V.Local.bActive.Set(True)
+	F.Intrinsic.Control.Case(2)
+		'Quarterly
+		V.Local.sInterval.Set("m")
+		V.Local.iLength.Set(3)
+		V.Local.bActive.Set(True)
+	F.Intrinsic.Control.Case(3)
+		'Annually
+		V.Local.sInterval.Set("yyyy")
+		V.Local.iLength.Set(1)
+		V.Local.bActive.Set(True)
+	F.Intrinsic.Control.Case(4)
+		'Every 2 Years
+		V.Local.sInterval.Set("yyyy")
+		V.Local.iLength.Set(2)
+		V.Local.bActive.Set(True)
+	F.Intrinsic.Control.Case(5)
+		'Every 3 Years
+		V.Local.sInterval.Set("yyyy")
+		V.Local.iLength.Set(3)
+		V.Local.bActive.Set(True)
+F.Intrinsic.Control.EndSelect
+
+F.Intrinsic.Date.DateAdd(V.Local.sInterval,V.Local.iLength,V.Local.dLast,V.Local.dTarget)
+
+F.Intrinsic.Control.If(V.Local.dTarget,<=,V.Ambient.Date)
+	V.Local.bAssign.Set(True)
+F.Intrinsic.Control.Else
+	V.Local.bAssign.Set(False)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Variable.AddRV("Assign",V.Local.bAssign)
+F.Intrinsic.Variable.AddRV("Active",V.Local.bActive)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.VerifyAssignment.End
+
+Program.Sub.SaveAssignments.Start
+F.Intrinsic.Control.Try
+
+F.Data.DataView.Create("dtAssignments","dvSave",22,"[EDITED]","")
+F.Data.DataView.ToDataTable("dtAssignments","dvSave","dtSave",False)
+F.Data.DataTable.RemoveColumn("dtSave","Email_log")
+F.Data.DataTable.RemoveColumn("dtSave","EDITED")
+
+F.Intrinsic.Control.CallSub(OpenConnection,"Connection",1,"CompanyCommon",True)
+F.Data.DataTable.SaveToDB("dtSave","con","GCG_6298_ASSIGNMENTS","AssignID",256)
+F.Intrinsic.Control.CallSub(CloseConnection,"Connection",1)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.SaveAssignments.End
+
+Program.Sub.SendEmail.Start
+'V.Args.RowIndex
+V.Local.sFiles.Declare
+V.Local.sSubject.Declare
+V.Local.sBody.Declare
+V.Local.sSQL.Declare
+V.Local.sRecipients.Declare
+V.Local.sMSOutlookRecipient.Declare
+V.Local.sSender.Declare
+V.Local.iCnt.Declare
+V.Local.iStatus.Declare
+V.Local.iUser.Declare
+V.Local.bOutLook.Declare
+V.Local.bOutlookRunning.Declare
+V.Local.sExclusions.Declare
+V.Local.sExclusionsSQL.Declare
+V.Local.sRet.Declare
+F.Intrinsic.Control.Try
+
+'Get documents
+F.Data.DataView.ToString("dtDocs","dvCourse","FILE*!*PATH","*!*","@!@",V.Local.sFiles)
+'Get recipient(s)
+F.Intrinsic.Control.If(V.DataTable.dtAssignments(V.Args.RowIndex).Employee!FieldValTrim,!=,"")
+	'Assign via Employee
+	V.Local.sRecipients.Redim(0,1)
+'	F.Global.Object.Load("oEmployee",12,V.DataTable.dtAssignments(V.Args.RowIndex).Employee!FieldValLong,V.Local.iStatus)
+'	F.Global.Security.GetFullName(V.Object.oEmployee.Audit.UserCD.Information.Username!FieldValString,V.Local.sRecipients(0))
+'	F.Global.Security.GetUserEmail(V.Object.oEmployee.Audit.UserCD.Information.Username!FieldValString,V.Local.sRecipients(1))
+	F.Intrinsic.String.Build("select PR_USER_ID from V_EMPLOYEE_MSTR where EMPLOYEE = '{0}' and PR_USER_ID <> '' and DATE_TERMINATION = '1900-01-01';",V.DataTable.dtAssignments(V.Args.RowIndex).Employee!FieldValString,V.Local.sSQL)
+	F.Intrinsic.Control.CallSub(OpenConnection,"Connection",1,"CompanyCommon",True)
+	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+	F.Intrinsic.Control.CallSub(CloseConnection,"Connection",1)
+	F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF,=,True,or,V.Local.sSQL.Trim,=,"")
+		'No user associated with employee, cancel email
+		F.Intrinsic.Variable.AddRV("EmailRet","Employee missing user")
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+	F.Global.Security.GetFullName(V.Local.sSQL,V.Local.sRecipients(0))
+	F.Global.Security.GetUserEmail(V.Local.sSQL,V.Local.sRecipients(1))
+	F.Intrinsic.Control.If(V.Local.sRecipients(1).Trim,=,"")
+		'No email attached to user, skip their email
+		F.Intrinsic.Variable.AddRV("EmailRet","User missing email")
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Join(V.Local.sRecipients,"*!*",V.Local.sRecipients)
+	V.Local.sRecipients.RedimPreserve(0,0)
+F.Intrinsic.Control.Else
+	'Assign via Department
+	'Get list of users already emailed for this assignment and exclude them from the new email
+	F.Intrinsic.String.Build("select AssignID, AssignDate, EmailList, LastEmailSent from GCG_6298_DEPT_EMAIL where AssignID = '{0}' and AssignDate = '{1}';",V.DataTable.dtAssignments(V.Args.RowIndex).AssignID!FieldVal,V.DataTable.dtAssignments(V.Args.RowIndex).AssignDate!FieldValPervasiveDate,V.Local.sSQL)
+	F.Intrinsic.Control.CallSub(OpenConnection,"Connection",1,"CompanyCommon",True)
+'	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+	F.Data.DataTable.CreateFromSQL("dtDeptEmail","con",V.Local.sSQL,True)
+	F.Data.DataTable.ColumnToString("dtDeptEmail","EmailList",V.Local.sSQL)
+	F.Intrinsic.String.Replace(V.Local.sSQL,"*!*","', '",V.Local.sExclusions)
+	F.Intrinsic.String.Build("select '{1}' as AssignID, cast('{2}' as Date) as AssignDate, PR_USER_ID as EmailList, NOW() as LastEmailSent from V_EMPLOYEE_MSTR where DEPT_EMPLOYEE = '{0}' and PR_USER_ID <> '' and DATE_TERMINATION = '1900-01-01'",V.DataTable.dtAssignments(V.Args.RowIndex).Dept!FieldValString,V.DataTable.dtAssignments(V.Args.RowIndex).AssignID!FieldVal,V.DataTable.dtAssignments(V.Args.RowIndex).AssignDate!FieldValPervasiveDate,V.Local.sSQL)
+	F.Intrinsic.Control.If(V.Local.sExclusions,!=,"")
+		F.Intrinsic.String.Build("{0} and PR_USER_ID not in ('{1}')",V.Local.sSQL,V.Local.sExclusions,V.Local.sSQL)
+	F.Intrinsic.Control.EndIf
+'	F.ODBC.Connection!con.ExecuteAndReturn(V.Local.sSQL,V.Local.sSQL)
+	F.Data.DataTable.CreateFromSQL("dtNewEmails","con",V.Local.sSQL,True)
+	F.Intrinsic.Control.CallSub(CloseConnection,"Connection",1)
+'	F.Intrinsic.Control.If(V.Ambient.ExecuteAndReturnEOF)
+	F.Intrinsic.Control.If(V.DataTable.dtNewEmails.RowCount,=,0)
+		'No users found for department, cancel email
+		F.Intrinsic.Variable.AddRV("EmailRet","No employees with users in the department")
+		F.Data.DataTable.Close("dtDeptEmail")
+		F.Data.DataTable.Close("dtNewEmails")
+		F.Intrinsic.Control.ExitSub
+	F.Intrinsic.Control.EndIf
+		'Append users to exclusions list
+		F.Data.DataTable.DeleteRow("dtDeptEmail")
+		F.Data.DataTable.AcceptChanges("dtDeptEmail")
+		F.Data.DataTable.Merge("dtNewEmails","dtDeptEmail",True,2)
+		F.Data.DataTable.Close("dtNewEmails")
+'		F.Intrinsic.String.Replace(V.Local.sExclusions,"', '","#$#",V.Local.sExclusions)
+'		F.Intrinsic.Control.If(V.Local.sExclusions,!=,"")
+'			F.Intrinsic.String.Build("update GCG_6298_DEPT_EMAIL set EmailList = '{0}' where AssignID = '{1}' and AssignDate = '{2}';","{0}",V.DataTable.dtAssignments(V.Args.RowIndex).AssignID!FieldVal,V.DataTable.dtAssignments(V.Args.RowIndex).AssignDate!FieldValPervasiveDate,V.Local.sExclusionsSQL)
+'			F.Intrinsic.String.Build("{0}#$#",V.Local.sExclusions,V.Local.sExclusions)
+'		F.Intrinsic.Control.Else
+'			F.Intrinsic.String.Build("insert into GCG_6298_DEPT_EMAIL (AssignID, AssignDate, EmailList) values ('{1}', '{2}', '{0}');","{0}",V.DataTable.dtAssignments(V.Args.RowIndex).AssignID!FieldVal,V.DataTable.dtAssignments(V.Args.RowIndex).AssignDate!FieldValPervasiveDate,V.Local.sExclusionsSQL)
+'		F.Intrinsic.Control.EndIf
+'		F.Intrinsic.String.Build("{0}{1}",V.Local.sExclusions,V.Local.sSQL,V.Local.sExclusions)
+'		F.Intrinsic.String.Replace(V.Local.sExclusions,"#$#","*!*",V.Local.sExclusions)
+'		F.Intrinsic.String.Build(V.Local.sExclusionsSQL,V.Local.sExclusions,V.Local.sExclusionsSQL)
+		F.Intrinsic.String.Build("delete from GCG_6298_DEPT_EMAIL where AssignID = '{0}' and AssignDate < '{1}';",V.DataTable.dtAssignments(V.Args.RowIndex).AssignID!FieldVal,V.DataTable.dtAssignments(V.Args.RowIndex).AssignDate!FieldValPervasiveDate,V.Local.sExclusions)
+		F.Intrinsic.Control.CallSub(OpenConnection,"Connection",1,"CompanyCommon",True)
+'		F.ODBC.Connection!con.Execute(V.Local.sExclusionsSQL)
+		F.ODBC.Connection!con.Execute(V.Local.sExclusions)
+		F.Data.DataTable.SaveToDB("dtDeptEmail","con","GCG_6298_DEPT_EMAIL","",128)
+		F.Intrinsic.Control.CallSub(CloseConnection,"Connection",1)
+		F.Data.DataTable.ColumnToString("dtDeptEmail","EmailList",V.Local.sSQL)
+		F.Intrinsic.String.Split(V.Local.sSQL,"*!*",V.Local.sSQL)
+'		F.Intrinsic.String.Split(V.Local.sSQL,"#$#",V.Local.sSQL)
+		F.Data.DataTable.Close("dtDeptEmail")
+		V.Local.sRecipients.Redim(0,1)
+		F.Intrinsic.Control.For(V.Local.iCnt,0,V.Local.sSQL.UBound,1)
+			F.Global.Security.GetFullName(V.Local.sSQL(V.Local.iCnt),V.Local.sRecipients(0))
+			F.Global.Security.GetUserEmail(V.Local.sSQL(V.Local.iCnt),V.Local.sRecipients(1))
+			F.Intrinsic.String.Join(V.Local.sRecipients,"*!*",V.Local.sSQL(V.Local.iCnt))
+		F.Intrinsic.Control.Next(V.Local.iCnt)
+		F.Intrinsic.String.Join(V.Local.sSQL,"@!@",V.Local.sRecipients)
+		V.Local.sRecipients.RedimPreserve(0,0)
+		V.Local.sSQL.Redim(0,0)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.sRecipients,=,"")
+	F.Intrinsic.Variable.AddRV("EmailRet","No recipients found")
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+'Get sender
+V.Local.sSender.Redim(0,1)
+F.Global.Registry.ReadValue(-1,V.Caller.CompanyCode,"6298EMAIL",6298,1000,6,"",V.Local.sSender(0))
+F.Intrinsic.Control.If(V.Global.bLocal,=,False,or,V.Local.sSender(0),=,"")
+	V.Local.sSender(0).Set(V.Global.sEmail)
+F.Intrinsic.Control.EndIf
+F.Intrinsic.String.Join(V.Local.sSender,"*!*",V.Local.sSender)
+V.Local.sSender.RedimPreserve(0,0)
+F.Global.Security.GetUserId(V.Caller.User,V.Caller.CompanyCode,V.Local.iUser)
+
+'Get Subject
+F.Intrinsic.String.Build("Assigned Course - {0}",V.DataView.dtCourses!dvCourse(0).CourseName!FieldValTrim,V.Local.sSubject)
+
+'Get Body
+F.Intrinsic.String.Build("You have been assigned a training. Please click the link below to view the training materials. Complete the training and digitally sign in Global Shop by {0}.",V.DataTable.dtAssignments(V.Args.RowIndex).AssignDueDate!FieldValString,V.Local.sBody)
+
+'3/24 edit - okay now we want to loop through the attachments and embed them as hyperlinks into the body string
+F.Intrinsic.Control.If(V.DataView.dtDocs!dvCourse.RowCount,>,0)
+	F.Intrinsic.String.Build("{0}<br>",V.Local.sBody,V.Local.sBody)
+	F.Intrinsic.Control.For(V.Local.iCnt,V.DataView.dtDocs!dvCourse.RowCount--)
+		'add files to body string
+		F.Intrinsic.String.Build("{0}<br><a href={1}{2}{3}{1}>{3}</a>",V.Local.sBody,V.Ambient.DblQuote,V.DataView.dtDocs!dvCourse(V.Local.iCnt).PATH!FieldValTrim,V.DataView.dtDocs!dvCourse(V.Local.iCnt).FILE!FieldValTrim,V.Local.sBody)
+	F.Intrinsic.Control.Next(V.Local.iCnt)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.String.Split(V.Local.sRecipients,"@!@",V.Local.sRecipients)
+'Check for OutLook
+Function.Intrinsic.Debug.Stop
+F.Automation.MSOutlook.CheckPresence(V.Local.bOutLook)
+F.Intrinsic.Task.IsProgramRunning("OUTLOOK.EXE",V.Local.bOutlookRunning)
+F.Intrinsic.Control.If(V.Global.bLocal,=,True,and,V.Local.bOutLook,=,True,V.Ambient.IsTerminalServicesClient,=,False,V.Local.bOutlookRunning,=,True,V.Ambient.IsInIDE,=,False)
+	'Local environment and Outlook is installed, email via OutLook
+'	F.Data.DataView.ToString("dtDocs","dvCourse","PATH*!*FILE","","*!*",V.Local.sFiles)
+'	F.Intrinsic.String.Replace(V.Local.sSender,"*!*","",V.Local.sSender)
+	F.Intrinsic.Control.For(V.Local.iCnt,0,V.Local.sRecipients.UBound,1)
+		F.Intrinsic.String.Split(V.Local.sRecipients(V.Local.iCnt),"*!*",V.Local.sMSOutlookRecipient)
+		'Modifying this to include the documents as hyperlinks instead of attachments 3/24
+'		F.Automation.MSOutlook.QueueEmail(V.Local.sMSOutlookRecipient(1),V.Local.sSubject,V.Local.sBody,V.Local.sFiles)
+		F.Intrinsic.Control.If(V.Local.sMSOutlookRecipient(1).Trim,<>,"")
+			F.Automation.MSOutlook.QueueEmailHTML(V.Local.sMSOutlookRecipient(1),V.Local.sSubject,V.Local.sBody)
+			F.Intrinsic.Control.If(V.Local.sRet,<>,"")
+				F.Intrinsic.String.Build("{0}{1}",V.Local.sRet,V.Ambient.NewLine,V.Local.sRet)
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.String.Build("{0}Email sent to '{1}'",V.Local.sRet,V.Local.sRecipients(V.Local.iCnt),V.Local.sRet)
+			F.Intrinsic.Control.Label("SendEmailOutlookReturn")
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Next(V.Local.iCnt)
+F.Intrinsic.Control.Else
+	'Email via Courier
+	F.Intrinsic.Control.For(V.Local.iCnt,0,V.Local.sRecipients.UBound,1)
+		'Modifying this to include the documents as hyperlinks instead of attachments 3/24
+'		F.Global.Messaging.QueueMessage(V.Caller.CompanyCode,V.Local.iUser,"GCG_6298",V.Local.sSubject,V.Local.sSender,V.Local.sRecipients(V.Local.iCnt),V.Local.sBody,-1,"",False,"",,"","","","","",V.Local.sFiles,False,"")
+		F.Intrinsic.Control.CallSub(CheckCourierActivated)
+		F.Intrinsic.Control.If(V.Args.Courier)
+			F.Global.Messaging.QueueMessage(V.Caller.CompanyCode,V.Local.iUser,"GCG_6298",V.Local.sSubject,V.Local.sSender,V.Local.sRecipients(V.Local.iCnt),"",-1,"",False,"",,"","","","","","",False,V.Local.sBody)
+		F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.If(V.Local.sRet,<>,"")
+			F.Intrinsic.String.Build("{0}{1}",V.Local.sRet,V.Ambient.NewLine,V.Local.sRet)
+		F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.If(V.Args.Courier)
+			F.Intrinsic.String.Build("{0}Email sent to '{1}'",V.Local.sRet,V.Local.sRecipients(V.Local.iCnt),V.Local.sRet)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}Courier not turned on '{1}'",V.Local.sRet,V.Local.sRecipients(V.Local.iCnt),V.Local.sRet)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Next(V.Local.iCnt)
+F.Intrinsic.Control.EndIf
+V.Local.sRecipients.Redim(0,0)
+F.Intrinsic.String.Replace(V.Local.sRet,"*!*",";",V.Local.sRet)
+F.Intrinsic.Variable.AddRV("EmailRet",V.Local.sRet)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Ambient.ErrorNumber,=,202610)
+		'Specific Outlook error I can't crack
+		F.Intrinsic.Control.If(V.Local.sRet,<>,"")
+			F.Intrinsic.String.Build("{0}{1}",V.Local.sRet,V.Ambient.NewLine,V.Local.sRet)
+		F.Intrinsic.Control.EndIf
+		F.Intrinsic.String.Build("{0}OUTLOOK ERROR: Could not queue email for '{1}'. Opening Compose instead",V.Local.sRet,V.Local.sRecipients(V.Local.iCnt),V.Local.sRet)
+		F.Automation.MSOutlook.ComposeEmailHTML(V.Local.sMSOutlookRecipient(1),V.Local.sSubject,V.Local.sBody)
+		F.Intrinsic.Control.ClearErrors
+		F.Intrinsic.Control.GoTo("SendEmailOutlookReturn")
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.If(V.Global.bLocal)
+			F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+		F.Intrinsic.Control.Else
+			F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+		F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndTry
+Program.Sub.SendEmail.End
+
+Program.Sub.ExportAssignments.Start
+V.Local.sEmplSheet.Declare
+V.Local.sEmplSheetAndCols.Declare
+V.Local.sDeptSheet.Declare
+V.Local.sDeptSheetAndCols.Declare
+V.Local.sWorkbook.Declare
+V.Local.sOldWorkbook.Declare
+V.Local.sOldWorkbookSheet1.Declare
+V.Local.sOldWorkbookSheet2.Declare
+V.Local.sFile.Declare
+V.Local.bExists.Declare
+F.Intrinsic.Control.Try
+
+F.Data.DataView.Create("dtAssignments","dvEdited")
+F.Data.DataView.SetFilter("dtAssignments","dvEdited","[EDITED] and [Employee] <> ''")
+F.Intrinsic.Control.If(V.DataView.dtAssignments!dvEdited.RowCount,>,0)
+	F.Data.DataView.ToString("dtAssignments","dvEdited","AssignID*!*CourseID*!*AssignDate*!*AssignDueDate*!*AssignCompleteDate*!*Email_log*!*Employee","*!*","$!$",V.Local.sEmplSheet)
+	F.Intrinsic.String.Build("Assign ID*!*Course ID*!*Assign Date*!*Assign Due Date*!*Assign Complete Date*!*Log*!*Employee$!${0}",V.Local.sEmplSheet,V.Local.sEmplSheetAndCols)
+F.Intrinsic.Control.EndIf
+F.Data.DataView.SetFilter("dtAssignments","dvEdited","[EDITED] and [Dept] <> ''")
+F.Intrinsic.Control.If(V.DataView.dtAssignments!dvEdited.RowCount,>,0)
+	F.Data.DataView.ToString("dtAssignments","dvEdited","AssignID*!*CourseID*!*AssignDate*!*AssignDueDate*!*AssignCompleteDate*!*Email_log*!*Dept","*!*","$!$",V.Local.sDeptSheet)
+	F.Intrinsic.String.Build("Assign ID*!*Course ID*!*Assign Date*!*Assign Due Date*!*Assign Complete Date*!*Log*!*Dept$!${0}",V.Local.sDeptSheet,V.Local.sDeptSheetAndCols)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.sEmplSheetAndCols,!=,"")
+	V.Local.sWorkbook.Set(V.Local.sEmplSheetAndCols)
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.If(V.Local.sDeptSheetAndCols,!=,"")
+	F.Intrinsic.Control.If(V.Local.sWorkbook,!=,"")
+		F.Intrinsic.String.Build("{0}&^&",V.Local.sWorkbook,V.Local.sWorkbook)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Build("{0}{1}",V.Local.sWorkbook,V.Local.sDeptSheetAndCols,V.Local.sWorkbook)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.If(V.Local.sWorkbook,!=,"")
+	'Write String
+	F.Intrinsic.String.Build("{0}\CUSTOM\6298\{1}\",V.Caller.GlobalDir,V.Caller.CompanyCode,V.Local.sFile)
+	F.Intrinsic.File.CreateDir(V.Local.sFile)
+	F.Intrinsic.String.Build("{0}GCG_6298_Assign_Export_{1}_{2}.xlsx",V.Local.sFile,V.Ambient.Date.FormatYYYYMMDD,V.Ambient.Time.FormatHHNNSS,V.Local.sFile)
+	F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bExists)
+	F.Intrinsic.Control.If(V.Local.bExists)
+		F.Automation.MSExcel.ReadSpreadsheet(V.Local.sFile,V.Local.sOldWorkbook)
+		F.Intrinsic.String.Split(V.Local.sOldWorkbook,"&^&",V.Local.sOldWorkbook)
+		F.Intrinsic.String.Split(V.Local.sOldWorkbook(0),"$!$",V.Local.sOldWorkbookSheet1)
+		F.Intrinsic.Control.If(V.Local.sOldWorkbookSheet1.Right4,!=,"Dept")
+			'Old Workbook sheet 1 is employee
+			F.Intrinsic.Control.If(V.Local.sEmplSheet,!=,"")
+				'We have employee data
+				F.Intrinsic.String.Build("{0}$!${1}",V.Local.sOldWorkbook(0),V.Local.sEmplSheet,V.Local.sEmplSheetAndCols)
+			F.Intrinsic.Control.Else
+				V.Local.sEmplSheetAndCols.Set(V.Local.sOldWorkbook(0))
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.If(V.Local.sOldWorkbook.UBound,>,0)
+				'Second sheet exists
+				F.Intrinsic.Control.If(V.Local.sDeptSheet,!=,"")
+					F.Intrinsic.String.Build("{0}$!${1}",V.Local.sOldWorkbook(1),V.Local.sDeptSheet,V.Local.sDeptSheetAndCols)
+				F.Intrinsic.Control.Else
+					V.Local.sDeptSheetAndCols.Set(V.Local.sOldWorkbook(1))
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.String.Build("{0}&^&{1}",V.Local.sEmplSheetAndCols,V.Local.sDeptSheetAndCols,V.Local.sOldWorkbook(0))
+		F.Intrinsic.Control.Else
+			'Old Workbook sheet 1 is Dept
+			F.Intrinsic.Control.If(V.Local.sDeptSheet,!=,"")
+				'We have Dept data
+				F.Intrinsic.String.Build("{0}$!${1}",V.Local.sOldWorkbook(0),V.Local.sDeptSheet,V.Local.sDeptSheetAndCols)
+			F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.If(V.Local.sEmplSheet,!=,"")
+				F.Intrinsic.String.Build("{0}&^&{1}",V.Local.sEmplSheetAndCols,V.Local.sDeptSheetAndCols,V.Local.sOldWorkbook(0))
+			F.Intrinsic.Control.Else
+				V.Local.sOldWorkbook(0).Set(V.Local.sDeptSheetAndCols)
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+		V.Local.sOldWorkbook.RedimPreserve(0,0)
+		V.Local.sWorkbook.Set(V.Local.sOldWorkbook)
+	F.Intrinsic.Control.EndIf
+	F.Automation.MSExcel.WriteSpreadsheet(V.Local.sFile,V.Local.sWorkbook)
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		'Open spreadsheet
+		F.Intrinsic.Task.ShellExec(0,"open",V.Local.sFile,"","",0)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.ExportAssignments.End
+
+Program.Sub.DeleteOldLogs.Start
+V.Local.sDir.Declare
+V.Local.sFileList.Declare
+V.Local.sFile.Declare
+V.Local.sFilePath.Declare
+V.Local.iFile.Declare
+V.Local.iDateDiff.Declare
+V.Local.dDate.Declare
+V.Local.bLocked.Declare
+F.Intrinsic.Control.Try
+
+F.Intrinsic.String.Build("{0}\CUSTOM\6298\{1}\",V.Caller.GlobalDir,V.Caller.CompanyCode,V.Local.sDir)
+F.Intrinsic.File.CreateDir(V.Local.sDir)
+F.Intrinsic.File.GetFileList(V.Local.sDir,V.Local.sFileList)
+F.Intrinsic.String.Split(V.Local.sFileList,":",V.Local.sFileList)
+
+F.Intrinsic.Control.For(V.Local.iFile,0,V.Local.sFileList.UBound,1)
+	F.Intrinsic.String.Split(V.Local.sFileList(V.Local.iFile),".",V.Local.sFile)
+	F.Intrinsic.Control.If(V.Local.sFile(V.Local.sFile.UBound).UCase,=,".XLSX")
+		F.Intrinsic.Variable.RemoveArrayElementByOrdinal(V.Local.sFile,V.Local.sFile.UBound,V.Local.sFile)
+		F.Intrinsic.String.Split(V.Local.sFile(0),"_",V.Local.sFile)
+		F.Intrinsic.Control.If(V.Local.sFile.UBound,>=,4)
+			F.Intrinsic.Date.ConvertDString(V.Local.sFile(4),"YYYYMMDD",V.Local.dDate)
+			F.Intrinsic.Date.DateDiff("d",V.Local.dDate,V.Ambient.Date,V.Local.iDateDiff)
+			F.Intrinsic.Control.If(V.Local.iDateDiff,>,30)
+				F.Intrinsic.String.Build("{0}{1}",V.Local.sDir,V.Local.sFileList(V.Local.iFile),V.Local.sFilePath)
+				F.Intrinsic.File.IsFileLocked(V.Local.sFilePath,V.Local.bLocked)
+				F.Intrinsic.Control.If(V.Local.bLocked.Not)
+					F.Intrinsic.File.DeleteFile(V.Local.sFilePath)
+				F.Intrinsic.Control.EndIf
+			F.Intrinsic.Control.EndIf
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+	V.Local.sFile.Redim(0,0)
+F.Intrinsic.Control.Next(V.Local.iFile)
+
+V.Local.sFileList.Redim(0,0)
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.DeleteOldLogs.End
+
+Program.Sub.CheckRegistry.Start
+F.Intrinsic.Control.Try
+F.Global.Registry.ReadValue(V.Caller.User,V.Caller.CompanyCode,"AssignProcess",6298,2,0,False,V.Global.bLocal)
+F.Global.Registry.ReadValue(V.Caller.User,V.Caller.CompanyCode,"AssignProcess",6298,2,5,"",V.Global.sEmail)
+
+F.Global.Registry.AddValue(V.Caller.User,V.Caller.CompanyCode,"AssignProcess",6298,2,False,"",False,-1,-1,V.Ambient.Date,V.Ambient.Time,"")
+
+F.Intrinsic.Control.Catch
+	F.Intrinsic.Control.If(V.Global.bLocal)
+		F.Intrinsic.Control.CallSub(ErrorMessage,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.Control.CallSub(ErrorLog,"ScriptFile",V.Caller.ScriptFile,"CurrentSubroutine",V.Ambient.CurrentSubroutine,"FolderName","6298")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.CheckRegistry.End
+
+Program.Sub.CheckCourierActivated.Start
+V.Local.bCourier.Declare
+
+F.Global.General.ReadOption(400135,0,False,0,V.Local.bCourier)
+F.Intrinsic.Variable.AddRV("Courier",V.Local.bCourier)
+
+Program.Sub.CheckCourierActivated.End
+
+Program.Sub.Comments.Start
+${$5$}$20.1.8746.21827$}$1
+${$6$}$bbaker$}$20240125132915168$}$pM7xsHplA2E9VCTenDTJ47gi1rF/t66Wd3QhPGZjceC2dPC4n44Tr+5R1K6Fl2Q+aHoE4+yz7tI=
+Program.Sub.Comments.End
