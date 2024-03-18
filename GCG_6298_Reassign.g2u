@@ -1,0 +1,56 @@
+﻿Program.Sub.Preflight.Start
+V.Global.sEmailFile.Declare
+F.Intrinsic.String.Build("{0}\GCG_6298_Resend_Email.{1}",V.Caller.LocalGSSTempDir,V.Caller.CompanyCode,V.Global.sEmailFile)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+V.Local.sFile.Declare
+V.Local.sRecipient.Declare
+V.Local.sSender.Declare
+V.Local.sNotify.Declare
+V.Local.iUserID.Declare
+V.Local.iRet.Declare
+V.Local.bExists.Declare
+Function.Intrinsic.UI.UsePixels ' Allows you to use Pixels instead of Twips throughout
+
+F.Intrinsic.File.Exists(V.Global.sEmailFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists.Not)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.File.File2String(V.Global.sEmailFile,V.Local.sFile)
+F.Intrinsic.String.Split(V.Local.sFile,"|~|",V.Local.sFile)
+'0 - Recipient
+'1 - Subject
+'2 - HTMLBody
+F.Intrinsic.Control.If(V.Local.sFile.UBound,<>,2)
+	F.Intrinsic.Control.End
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.File.DeleteFile(V.Global.sEmailFile)
+V.Local.sRecipient.Set(V.Local.sFile(0))
+F.Intrinsic.Control.If(Variable.Ambient.IsTerminalServicesClient)
+	F.Global.Security.GetUserID(V.Caller.User,V.Caller.CompanyCode,V.Local.iUserID)
+	F.Global.Security.GetUserEmail(V.Caller.User,V.Caller.CompanyCode,V.Local.sSender)
+	F.Intrinsic.Control.If(V.Local.sSender.Trim,=,"")
+		F.Intrinsic.UI.Msgbox("No sender email for current user. Cancelling email.")
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Build("Recipient: {0}{1}{1}Subject: {2}{1}{1}Body: {3}{1}{1}Are you sure you want to send this email?",V.Local.sRecipient,V.Ambient.NewLine,V.Local.sFile(1),V.Local.sFile(2),V.Local.sNotify)
+	F.Intrinsic.UI.Msgbox(V.Local.sNotify,"EMAIL",V.Enum.MsgBoxStyle!YesNo,V.Local.iRet)
+	F.Intrinsic.Control.If(V.Local.iRet,=,V.Enum.MsgBoxResult!No)
+		F.Intrinsic.Control.End
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Build("{0}*!*",V.Local.sSender,V.Local.sSender)
+	F.Intrinsic.String.Build("*!*{0}",V.Local.sRecipient,V.Local.sRecipient)
+	F.Global.Messaging.QueueMessage(V.Caller.CompanyCode,V.Local.iUserID,"GCG_6298",V.Local.sFile(1),V.Local.sSender,V.Local.sRecipient,V.Local.sFile(2))
+F.Intrinsic.Control.Else
+	F.Automation.MSOutlook.ComposeEmailHTML(V.Local.sRecipient,V.Local.sFile(1),v.Local.sFile(2))
+F.Intrinsic.Control.EndIf
+
+Program.Sub.Main.End
+
+Program.Sub.Comments.Start
+${$5$}$20.1.8577.26074$}$1
+${$6$}$bbaker$}$20230824143919540$}$pM7xsHplA2E9VCTenDTJ47gi1rF/t66WIO4JG5sWH9U/5haVCE9uZ7RNsCTGql0e0vfGu4lqbnA=
+Program.Sub.Comments.End
