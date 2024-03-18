@@ -1,0 +1,143 @@
+Program.Sub.Preflight.Start
+V.Global.bCon1.Declare
+V.Global.bCon2.Declare
+V.Global.bCon3.Declare
+V.Global.bCon4.Declare
+V.Global.bCon5.Declare
+Program.Sub.Preflight.End
+
+Program.Sub.ErrorMessage.Start
+'Arguments: ScriptFile, CurrentSubroutine
+V.Local.sError.Declare
+F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Args.ScriptFile,V.Ambient.Newline,V.Args.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+F.Intrinsic.UI.Msgbox(V.Local.sError)
+Program.Sub.ErrorMessage.End
+
+Program.Sub.ErrorLog.Start
+'Arguments: ScriptFile, CurrentSubroutine, FolderName
+V.Local.sError.Declare
+V.Local.sFile.Declare
+V.Local.sFileString.Declare
+V.Local.bExists.Declare
+F.Intrinsic.String.Build("Project: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}",V.Args.ScriptFile,V.Ambient.Newline,V.Args.CurrentSubroutine,V.Ambient.ErrorNumber,V.Ambient.ErrorDescription,V.Ambient.GABVersion,V.Local.sError)
+F.Intrinsic.String.Build("{0}\CUSTOM\{1}\{2}\",V.Caller.GlobalDir,V.Args.FolderName,V.Caller.CompanyCode,V.Local.sFile)
+F.Intrinsic.File.CreateDir(V.Local.sFile)
+F.Intrinsic.String.Build("{0}ERR_LOG_{1}.log",V.Local.sFile,V.Ambient.Date.FormatYYYYMMDD,V.Local.sFile)
+F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists)
+	F.Intrinsic.File.File2String(V.Local.sFile,V.Local.sFileString)
+	F.Intrinsic.String.Build("{0}{1}{1}",V.Local.sFileString,V.Ambient.NewLine,V.Local.sFileString)
+F.Intrinsic.Control.EndIf
+F.Intrinsic.String.Build("{0}Logged: {1}{2}{3}",V.Local.sFileString,V.Ambient.Time.FormatHH:NN:SS,V.Ambient.NewLine,V.Local.sError,V.Local.sFileString)
+F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sFileString)
+Program.Sub.ErrorLog.End
+
+Program.Sub.OpenConnection.Start
+'Arguments: Connection, CompanyCommon
+F.Intrinsic.Control.SelectCase(V.Args.Connection)
+	F.Intrinsic.Control.Case(1)
+		F.Intrinsic.Control.If(V.Global.bCon1.Not)
+			F.Intrinsic.Control.If(V.Args.CompanyCommon)
+				F.ODBC.Connection!con.OpenCompanyConnection
+			F.Intrinsic.Control.Else
+				F.ODBC.Connection!con.OpenCommonConnection
+			F.Intrinsic.Control.EndIf
+			V.Global.bCon1.Set(True)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(2)
+		F.Intrinsic.Control.If(V.Global.bCon2.Not)
+			F.Intrinsic.Control.If(V.Args.CompanyCommon)
+				F.ODBC.Connection!con2.OpenCompanyConnection
+			F.Intrinsic.Control.Else
+				F.ODBC.Connection!con2.OpenCommonConnection
+			F.Intrinsic.Control.EndIf
+			V.Global.bCon2.Set(True)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(3)
+		F.Intrinsic.Control.If(V.Global.bCon3.Not)
+			F.Intrinsic.Control.If(V.Args.CompanyCommon)
+				F.ODBC.Connection!con3.OpenCompanyConnection
+			F.Intrinsic.Control.Else
+				F.ODBC.Connection!con3.OpenCommonConnection
+			F.Intrinsic.Control.EndIf
+			V.Global.bCon3.Set(True)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(4)
+		F.Intrinsic.Control.If(V.Global.bCon4.Not)
+			F.Intrinsic.Control.If(V.Args.CompanyCommon)
+				F.ODBC.Connection!con4.OpenCompanyConnection
+			F.Intrinsic.Control.Else
+				F.ODBC.Connection!con4.OpenCommonConnection
+			F.Intrinsic.Control.EndIf
+			V.Global.bCon4.Set(True)
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(5)
+		F.Intrinsic.Control.If(V.Global.bCon5.Not)
+			F.Intrinsic.Control.If(V.Args.CompanyCommon)
+				F.ODBC.Connection!con5.OpenCompanyConnection
+			F.Intrinsic.Control.Else
+				F.ODBC.Connection!con5.OpenCommonConnection
+			F.Intrinsic.Control.EndIf
+			V.Global.bCon5.Set(True)
+		F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndSelect
+Program.Sub.OpenConnection.End
+
+Program.Sub.CloseConnection.Start
+'Arguments: Connection
+F.Intrinsic.Control.SelectCase(V.Args.Connection)
+	F.Intrinsic.Control.Case(1)
+		F.Intrinsic.Control.If(V.Global.bCon1)
+			V.Global.bCon1.Set(False)
+			F.ODBC.Connection!con.Close
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(2)
+		F.Intrinsic.Control.If(V.Global.bCon2)
+			V.Global.bCon2.Set(False)
+			F.ODBC.Connection!con2.Close
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(3)
+		F.Intrinsic.Control.If(V.Global.bCon3)
+			V.Global.bCon3.Set(False)
+			F.ODBC.Connection!con3.Close
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(4)
+		F.Intrinsic.Control.If(V.Global.bCon4)
+			V.Global.bCon4.Set(False)
+			F.ODBC.Connection!con4.Close
+		F.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.Case(5)
+		F.Intrinsic.Control.If(V.Global.bCon5)
+			V.Global.bCon5.Set(False)
+			F.ODBC.Connection!con5.Close
+		F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndSelect
+Program.Sub.CloseConnection.End
+
+Program.Sub.CloseAllConnections.Start
+F.Intrinsic.Control.If(V.Global.bCon1)
+	V.Global.bCon1.Set(False)
+	F.ODBC.Connection!con.Close
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.If(V.Global.bCon2)
+	V.Global.bCon2.Set(False)
+	F.ODBC.Connection!con2.Close
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.If(V.Global.bCon3)
+	V.Global.bCon3.Set(False)
+	F.ODBC.Connection!con3.Close
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.If(V.Global.bCon4)
+	V.Global.bCon4.Set(False)
+	F.ODBC.Connection!con4.Close
+F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.If(V.Global.bCon5)
+	V.Global.bCon5.Set(False)
+	F.ODBC.Connection!con5.Close
+F.Intrinsic.Control.EndIf
+Program.Sub.CloseAllConnections.End
+
+Program.Sub.Comments.Start
+${$5$}$3.0.0.0$}$0
+${$6$}$bbaker$}$20200319091743923$}$pM7xsHplA2E9VCTenDTJ47gi1rF/t66WjoUfLL22f6Lo6fyM3rCyFamzJGK8LKPmteW8ozez7aw=
+Program.Sub.Comments.End
